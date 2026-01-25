@@ -1,0 +1,157 @@
+//esp32 (30pin) 10 channnel transmitter code
+
+#include <WiFi.h>
+#include <esp_now.h>
+
+// ================= PIN DEFINITIONS =================
+// Joystick 1 (Rover)
+#define J1_X 32
+#define J1_Y 33
+#define J1_SW 13
+
+// Joystick 2 (Arm)
+#define J2_X 34
+#define J2_Y 35
+#define J2_SW 12
+
+// Direction Buttons
+#define BTN_FWD   14
+#define BTN_BACK  27
+#define BTN_LEFT  26
+#define BTN_RIGHT 25
+
+// Status LED
+#define LED_STATUS 2
+
+// ===== CHANGE THIS TO RECEIVER MAC =====
+uint8_t receiverMAC[] = {0xA4, 0xF0, 0x0F, 0x5A, 0x7B, 0x54};
+
+//uint8_t receiverAddress[] = {0xA4, 0xF0, 0x0F, 0x5A, 0x7B, 0x54};
+
+// ================= DATA STRUCT =================
+typedef struct {
+  int j1x, j1y;
+  int j2x, j2y;
+
+  bool j1Btn;
+  bool j2Btn;
+
+  bool fwd;
+  bool back;
+  bool left;
+  bool right;
+} ControlPacket;
+
+ControlPacket data;
+
+// ================= CONNECTION STATE =================
+bool connected = false;
+unsigned long lastSuccess = 0;
+unsigned long lastBlink = 0;
+bool ledState = LOW;
+
+// ================= ESP-NOW CALLBACK =================
+void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    connected = true;
+    lastSuccess = millis();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // LED
+  pinMode(LED_STATUS, OUTPUT);
+
+  // Buttons
+  pinMode(J1_SW, INPUT_PULLUP);
+  pinMode(J2_SW, INPUT_PULLUP);
+  pinMode(BTN_FWD, INPUT_PULLUP);
+  pinMode(BTN_BACK, INPUT_PULLUP);
+  pinMode(BTN_LEFT, INPUT_PULLUP);
+  pinMode(BTN_RIGHT, INPUT_PULLUP);
+
+  // WiFi / ESP-NOW
+  WiFi.mode(WIFI_STA);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW INIT FAILED");
+    return;
+  }
+
+  esp_now_register_send_cb(onDataSent);
+
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, receiverMAC, 6);
+  peer.channel = 0;
+  peer.encrypt = false;
+
+  esp_now_add_peer(&peer);
+
+  Serial.println("=== ESP-NOW TRANSMITTER READY ===");
+}
+
+void loop() {
+  // ===== READ JOYSTICKS =====
+  data.j1x = analogRead(J1_X);
+  data.j1y = analogRead(J1_Y);
+
+  data.j2x = analogRead(J2_X);
+  data.j2y = analogRead(J2_Y);
+
+  // ===== READ BUTTONS =====
+  data.j1Btn = !digitalRead(J1_SW);
+  data.j2Btn = !digitalRead(J2_SW);
+
+  data.fwd   = !digitalRead(BTN_FWD);
+  data.back  = !digitalRead(BTN_BACK);
+  data.left  = !digitalRead(BTN_LEFT);
+  data.right = !digitalRead(BTN_RIGHT);
+
+  // ===== SEND DATA =====
+  esp_now_send(receiverMAC, (uint8_t*)&data, sizeof(data));
+
+  // ===== CONNECTION TIMEOUT =====
+  if (millis() - lastSuccess > 1000) {
+    connected = false;
+  }
+
+  // ===== LED STATUS =====
+  if (connected) {
+    digitalWrite(LED_STATUS, HIGH);
+  } else {
+    if (millis() - lastBlink > 400) {
+      ledState = !ledState;
+      digitalWrite(LED_STATUS, ledState);
+      lastBlink = millis();
+    }
+  }
+
+  // ===== SERIAL DEBUG =====
+  Serial.println("---- TX DATA ----");
+  Serial.print("J1: "); Serial.print(data.j1x);
+  Serial.print(", "); Serial.println(data.j1y);
+
+  Serial.print("J2: "); Serial.print(data.j2x);
+  Serial.print(", "); Serial.println(data.j2y);
+
+  Serial.print("Buttons | J1:");
+  Serial.print(data.j1Btn);
+  Serial.print(" J2:");
+  Serial.print(data.j2Btn);
+
+  Serial.print(" F:");
+  Serial.print(data.fwd);
+  Serial.print(" B:");
+  Serial.print(data.back);
+  Serial.print(" L:");
+  Serial.print(data.left);
+  Serial.print(" R:");
+  Serial.println(data.right);
+
+  Serial.println(connected ? "STATUS: CONNECTED ✅" : "STATUS: SEARCHING ❌");
+  Serial.println();
+
+  delay(1000); // ~25Hz
+}
