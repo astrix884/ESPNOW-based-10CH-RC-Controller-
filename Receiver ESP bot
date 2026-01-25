@@ -1,0 +1,162 @@
+//ESP32 based BOT made using L298N Motor driver sample code 
+
+#include <WiFi.h>
+#include <esp_now.h>
+
+// ================= MOTOR PINS =================
+// Left Motor
+#define IN1 18
+#define IN2 19
+
+// Right Motor (CHANGED FROM GPIO 5 ❗)
+#define IN3 23
+#define IN4 15
+
+// Status LED
+#define LED_STATUS 2
+
+// ================= DATA STRUCT =================
+typedef struct {
+  int j1x, j1y;
+  int j2x, j2y;
+
+  bool j1Btn;
+  bool j2Btn;
+
+  bool fwd;
+  bool back;
+  bool left;
+  bool right;
+} ControlPacket;
+
+ControlPacket rxData;
+
+// ================= SIGNAL =================
+unsigned long lastRecvTime = 0;
+bool signalLost = true;
+
+// ================= ESP-NOW CALLBACK =================
+void onDataRecv(const esp_now_recv_info_t *info,
+                const uint8_t *incomingData, int len) {
+  memcpy(&rxData, incomingData, sizeof(rxData));
+  lastRecvTime = millis();
+  signalLost = false;
+}
+
+// ================= MOTOR FUNCTIONS =================
+void stopMotors() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
+
+void moveForward() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+void moveBackward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+void turnRight() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+void turnLeft() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+// ================= SETUP =================
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(LED_STATUS, OUTPUT);
+
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  stopMotors();
+
+  WiFi.mode(WIFI_STA);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW INIT FAILED");
+    return;
+  }
+
+  esp_now_register_recv_cb(onDataRecv);
+
+  Serial.println("=== ESP-NOW RC RECEIVER READY ===");
+}
+
+// ================= LOOP =================
+void loop() {
+
+  // ===== FAILSAFE =====
+  if (millis() - lastRecvTime > 1000) {
+    signalLost = true;
+    stopMotors();
+    digitalWrite(LED_STATUS, LOW);
+    return;
+  }
+
+  digitalWrite(LED_STATUS, HIGH);
+
+  // ===== BUTTON PRIORITY =====
+  if (rxData.fwd) {
+    moveForward();
+  }
+  else if (rxData.back) {
+    moveBackward();
+  }
+  else if (rxData.left) {
+    turnLeft();
+  }
+  else if (rxData.right) {
+    turnRight();
+  }
+  else {
+    // ===== JOYSTICK CONTROL =====
+    int deadzone = 400;
+
+    if (rxData.j1y > 2048 + deadzone) {
+      moveForward();
+    }
+    else if (rxData.j1y < 2048 - deadzone) {
+      moveBackward();
+    }
+    else if (rxData.j1x > 2048 + deadzone) {
+      turnRight();
+    }
+    else if (rxData.j1x < 2048 - deadzone) {
+      turnLeft();
+    }
+    else {
+      stopMotors();
+    }
+  }
+
+  // ===== DEBUG =====
+  Serial.print("J1X:");
+  Serial.print(rxData.j1x);
+  Serial.print(" J1Y:");
+  Serial.print(rxData.j1y);
+  Serial.println(signalLost ? " ❌" : " ✅");
+
+  delay(20);
+}
